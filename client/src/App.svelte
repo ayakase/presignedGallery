@@ -203,6 +203,32 @@
     }
   }
 
+  // State modal xem trước file gốc chất lượng cao (On-Demand)
+  let viewingFile = $state(null);
+  let isLoadingOriginal = $state(false);
+
+  // Ký URL On-Demand và mở xem file gốc chất lượng cao
+  async function openOriginalFile(item, mode = 'inline') {
+    try {
+      isLoadingOriginal = true;
+      const res = await axios.get(`${API_URL}/files/${item.id}/view-url?mode=${mode}`);
+      const fileData = res.data;
+
+      if (mode === 'attachment') {
+        window.open(fileData.url, '_blank');
+      } else {
+        viewingFile = {
+          ...item,
+          originalUrl: fileData.url,
+        };
+      }
+    } catch (err) {
+      alert(`Lỗi lấy link xem file: ${err.response?.data?.error || err.message}`);
+    } finally {
+      isLoadingOriginal = false;
+    }
+  }
+
   function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -448,21 +474,21 @@
                     </button>
                   </div>
 
-                  <!-- Thân preview của card -->
-                  <a href={item.presignedUrl} target="_blank" class="file-preview-area" rel="noreferrer">
+                  <!-- Thân preview của card: Click vào để mở xem file gốc chất lượng cao -->
+                  <div class="file-preview-area" onclick={() => openOriginalFile(item)}>
                     {#if item.mimeType.startsWith('image/')}
-                      <img src={item.thumbnailPresignedUrl || item.presignedUrl} alt={item.name} loading="lazy" />
+                      <img src={item.previewUrl} alt={item.name} loading="lazy" />
                     {:else}
                       <div class="large-icon-placeholder">{iconInfo.icon}</div>
                     {/if}
-                  </a>
+                  </div>
 
-                  <!-- Footer của card: Dung lượng -->
+                  <!-- Footer của card: Dung lượng & Nút mở -->
                   <div class="file-card-bottom">
                     <span class="file-size-tag">{formatBytes(item.size)}</span>
-                    <a href={item.presignedUrl} target="_blank" class="link-open-direct" title="Xem chi tiết" rel="noreferrer">
+                    <button class="link-open-btn" title="Xem chi tiết" onclick={() => openOriginalFile(item)}>
                       Mở ↗
-                    </a>
+                    </button>
                   </div>
                 </div>
               {/each}
@@ -487,9 +513,9 @@
                       <td class="col-name">
                         <div class="table-name-cell">
                           <span class="row-icon">{iconInfo.icon}</span>
-                          <a href={item.presignedUrl} target="_blank" class="table-file-link" rel="noreferrer">
+                          <button class="table-file-btn" onclick={() => openOriginalFile(item)}>
                             {item.name}
-                          </a>
+                          </button>
                         </div>
                       </td>
                       <td class="col-owner">tôi</td>
@@ -497,9 +523,12 @@
                       <td class="col-size">{formatBytes(item.size)}</td>
                       <td class="col-actions">
                         <div class="table-action-btns">
-                          <a href={item.presignedUrl} target="_blank" class="action-btn-circle" title="Mở file" rel="noreferrer">
-                            ↗
-                          </a>
+                          <button class="action-btn-circle" title="Xem file gốc" onclick={() => openOriginalFile(item)}>
+                            👁️
+                          </button>
+                          <button class="action-btn-circle" title="Tải về máy" onclick={() => openOriginalFile(item, 'attachment')}>
+                            ⬇️
+                          </button>
                           <button class="action-btn-circle danger" title="Xóa file" onclick={() => handleDeleteFile(item.id, item.name)}>
                             ✕
                           </button>
@@ -578,6 +607,54 @@
           <button class="btn-primary" onclick={() => recursiveData = null}>Đóng</button>
         </div>
       </div>
+    </div>
+  {/if}
+
+  <!-- MODAL XEM ẢNH/TÀI LIỆU GỐC NÉT CĂNG (LIGHTBOX ON-DEMAND PREVIEW) -->
+  {#if viewingFile}
+    <div class="lightbox-backdrop" onclick={() => viewingFile = null}>
+      <div class="lightbox-window" onclick={(e) => e.stopPropagation()}>
+        <div class="lightbox-header">
+          <div class="lightbox-title-box">
+            <span class="lightbox-filename" title={viewingFile.name}>{viewingFile.name}</span>
+            <span class="lightbox-badge">{formatBytes(viewingFile.size)} • Ảnh gốc chất lượng cao</span>
+          </div>
+          <div class="lightbox-actions">
+            <a href={viewingFile.originalUrl} target="_blank" download={viewingFile.name} class="btn-download-original" rel="noreferrer">
+              ⬇ Tải về máy
+            </a>
+            <button class="btn-lightbox-close" onclick={() => viewingFile = null}>✕</button>
+          </div>
+        </div>
+
+        <div class="lightbox-body">
+          {#if viewingFile.mimeType.startsWith('image/')}
+            <img src={viewingFile.originalUrl} alt={viewingFile.name} class="lightbox-full-img" />
+          {:else if viewingFile.mimeType.startsWith('video/')}
+            <video src={viewingFile.originalUrl} controls autoplay class="lightbox-full-media">
+              <track kind="captions" />
+            </video>
+          {:else if viewingFile.mimeType.startsWith('audio/')}
+            <audio src={viewingFile.originalUrl} controls autoplay class="lightbox-audio"></audio>
+          {:else}
+            <div class="lightbox-unsupported">
+              <span class="unsupported-icon">📄</span>
+              <p>Định dạng này không hỗ trợ xem trực tiếp trong trình duyệt.</p>
+              <a href={viewingFile.originalUrl} target="_blank" download={viewingFile.name} class="btn-primary" rel="noreferrer">
+                Tải tệp xuống máy
+              </a>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- LOADING SPINNER KHI ĐANG KÝ ON-DEMAND -->
+  {#if isLoadingOriginal}
+    <div class="signing-indicator">
+      <span class="spinner-dot">⏳</span>
+      <span>Đang lấy link bảo mật từ AWS S3...</span>
     </div>
   {/if}
 </div>
@@ -1280,4 +1357,156 @@
     display: flex;
     justify-content: flex-end;
   }
+
+  /* LIGHTBOX MODAL (ON-DEMAND PREVIEW CHI TIẾT) */
+  .lightbox-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+  }
+  .lightbox-window {
+    background: #ffffff;
+    border-radius: 16px;
+    width: 90vw;
+    max-width: 950px;
+    height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  }
+  .lightbox-header {
+    height: 56px;
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+  }
+  .lightbox-title-box {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+  }
+  .lightbox-filename {
+    font-size: 15px;
+    font-weight: 600;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lightbox-badge {
+    font-size: 12px;
+    color: #64748b;
+  }
+  .lightbox-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .btn-download-original {
+    background: #1a73e8;
+    color: white;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-download-original:hover { background: #1557b0; }
+  .btn-lightbox-close {
+    background: none;
+    border: none;
+    font-size: 20px;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .lightbox-body {
+    flex: 1;
+    background: #090d16;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: 16px;
+  }
+  .lightbox-full-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+  .lightbox-full-media {
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .lightbox-audio { width: 400px; }
+  .lightbox-unsupported {
+    text-align: center;
+    color: #cbd5e1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .unsupported-icon { font-size: 56px; }
+
+  /* SIGNING INDICATOR NOTIFICATION */
+  .signing-indicator {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    z-index: 400;
+    animation: fadeIn 0.2s;
+  }
+  .spinner-dot { font-size: 16px; }
+
+  .link-open-btn {
+    border: none;
+    background: transparent;
+    color: #1a73e8;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .link-open-btn:hover { text-decoration: underline; }
+
+  .table-file-btn {
+    border: none;
+    background: transparent;
+    color: #1f1f1f;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    padding: 0;
+  }
+  .table-file-btn:hover { color: #1a73e8; text-decoration: underline; }
 </style>

@@ -282,31 +282,23 @@ app.get("/api/files", async (c) => {
     .limit(limit)
     .offset(offset);
 
+  // BATCH SIGNING: CHỈ KÝ DUY NHẤT 1 LINK THUMBNAIL (Preview) để render lưới ảnh siêu nhẹ!
+  // Tuyệt đối không ký ảnh gốc ở đây để tránh lãng phí 50% CPU và tài nguyên mạng.
   const data = await Promise.all(
     fileRecords.map(async (file) => {
-      // 1. Ký URL file gốc
-      const presignedUrl = await generatePresignedDownloadUrl({
-        s3Key: file.s3Key,
+      const isImage = file.mimeType.startsWith("image/");
+      const keyToSign = (isImage && file.thumbnailKey) ? file.thumbnailKey : file.s3Key;
+
+      const previewUrl = await generatePresignedDownloadUrl({
+        s3Key: keyToSign,
         fileName: file.name,
         mode: "inline",
         expiresInSeconds: 300,
       });
 
-      // 2. Ký URL thumbnail (nếu có thumbnailKey do Lambda tạo)
-      let thumbnailPresignedUrl: string | null = null;
-      if (file.thumbnailKey) {
-        thumbnailPresignedUrl = await generatePresignedDownloadUrl({
-          s3Key: file.thumbnailKey,
-          fileName: `thumb-${file.name}.webp`,
-          mode: "inline",
-          expiresInSeconds: 300,
-        });
-      }
-
       return {
         ...file,
-        presignedUrl,
-        thumbnailPresignedUrl: thumbnailPresignedUrl || presignedUrl, // Fallback sang ảnh gốc nếu chưa có thumb
+        previewUrl, // Link thumbnail nhẹ nhàng cho Grid/List
       };
     }),
   );
@@ -319,6 +311,36 @@ app.get("/api/files", async (c) => {
       total,
       totalPages: Math.ceil(total / limit) || 1,
     },
+  });
+});
+
+// 2.2 ON-DEMAND SIGNING: Ký ĐÚNG 1 file gốc chất lượng cao khi người dùng bấm Mở / Xem / Tải
+app.get("/api/files/:id/view-url", async (c) => {
+  const fileId = parseInt(c.req.param("id"), 10);
+  const mode = (c.req.query("mode") === "attachment" ? "attachment" : "inline") as "inline" | "attachment";
+
+  const [file] = await db
+    .select()
+    .from(files)
+    .where(and(eq(files.id, fileId), eq(files.userId, 1)));
+
+  if (!file) {
+    return c.json({ error: "Không tìm thấy file" }, 404);
+  }
+
+  // Ký số Just-In-Time cho file gốc với TTL 15 phút
+  const url = await generatePresignedDownloadUrl({
+    s3Key: file.s3Key,
+    fileName: file.name,
+    mode,
+    expiresInSeconds: 900,
+  });
+
+  return c.json({
+    fileId: file.id,
+    name: file.name,
+    url,
+    mimeType: file.mimeType,
   });
 });
 
