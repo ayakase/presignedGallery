@@ -1,4 +1,6 @@
 import dotenv from "dotenv";
+import crypto from "crypto";
+import { redis } from "./redis.js";
 dotenv.config();
 
 import {
@@ -77,21 +79,58 @@ export async function generatePresignedDownloadUrl(params: {
   mode?: "inline" | "attachment";
   expiresInSeconds?: number;
 }) {
-  const { s3Key, fileName, mode = "inline", expiresInSeconds = 300 } = params;
-
+  const { s3Key, fileName, mode = "inline", expiresInSeconds = 900 } = params;
+  // 1. Khóa Cache trong Redis: ví dụ presigned:get:users/1/cat.jpg
+  const cacheKey = `presigned:${mode}:${s3Key}`;
+  // 2. Thử lấy từ Redis
+  try {
+    const cachedUrl = await redis.get(cacheKey);
+    if (cachedUrl) {
+      console.log("🚀 HIT CACHE! Trả về link cũ giống hệt 100%");
+      return cachedUrl; // 🚀 HIT CACHE! Trả về link cũ giống hệt 100%
+    }
+  } catch (e) {
+    console.error("🔴 Redis Error:", e.message);
+  }
+  // 3. MISS CACHE: Sinh link mới
   const contentDisposition =
     mode === "attachment"
       ? `attachment; filename="${encodeURIComponent(fileName)}"`
       : `inline; filename="${encodeURIComponent(fileName)}"`;
-
   const command = new GetObjectCommand({
     Bucket: getBucketName(),
     Key: s3Key,
     ResponseContentDisposition: contentDisposition,
   });
-
-  // Ký số cục bộ (chạy offline bằng CPU, siêu nhanh ~0.05ms)
-  return await getSignedUrl(s3Client, command, {
+  const presignedUrl = await getSignedUrl(s3Client, command, {
     expiresIn: expiresInSeconds,
   });
+  // 4. Lưu vào Redis với TTL = 840s (14 phút)
+  try {
+    await redis.set(cacheKey, presignedUrl, "EX", expiresInSeconds - 60);
+  } catch (e) {}
+  return presignedUrl;
+}
+export async function generatePresignedUploadUrl(params: {
+  userId: number;
+  fileName: string;
+  mimeType: string;
+  expiresInSeconds?: number;
+}) {
+  const { userId, fileName, mimeType, expiresInSeconds = 900 } = params;
+  // 1. Chuẩn hóa tên file & tạo S3 Key cô lập theo User
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const uniqueId = crypto.randomUUID();
+  const s3Key = `users/${userId}/${uniqueId}-${safeName}`;
+  // 2. Tạo PutObjectCommand
+  const command = new PutObjectCommand({
+    Bucket: getBucketName(),
+    Key: s3Key,
+    ContentType: mimeType, // Bắt buộc Client gửi đúng Content-Type này
+  });
+  // 3. Ký số URL (hạn 15 phút để người dùng mạng chậm tha hồ upload)
+  const uploadUrl = await getSignedUrl(s3Client, command, {
+    expiresIn: expiresInSeconds,
+  });
+  return { uploadUrl, s3Key };
 }
