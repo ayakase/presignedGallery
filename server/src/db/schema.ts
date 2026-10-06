@@ -23,6 +23,7 @@ export const files = sqliteTable("files", {
   }),
 
   userId: integer("user_id").notNull().default(1),
+  thumbnailKey: text("thumbnail_key"),
   createdAt: text("created_at").default(sql`(CURRENT_TIMESTAMP)`),
 });
 

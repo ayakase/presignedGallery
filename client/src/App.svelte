@@ -451,7 +451,7 @@
                   <!-- Thân preview của card -->
                   <a href={item.presignedUrl} target="_blank" class="file-preview-area" rel="noreferrer">
                     {#if item.mimeType.startsWith('image/')}
-                      <img src={item.presignedUrl} alt={item.name} loading="lazy" />
+                      <img src={item.thumbnailPresignedUrl || item.presignedUrl} alt={item.name} loading="lazy" />
                     {:else}
                       <div class="large-icon-placeholder">{iconInfo.icon}</div>
                     {/if}

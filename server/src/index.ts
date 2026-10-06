@@ -14,7 +14,7 @@ import {
 
 const app = new Hono();
 app.use("/*", cors());
-
+app.get("/", (c) => c.text("Hello, Hono! Server is running."));
 // ==========================================
 // THUẬT TOÁN ĐỆ QUY DUYỆT CÂY THƯ MỤC (DFS)
 // ==========================================
@@ -27,7 +27,7 @@ interface RecursiveFolderNode {
 
 async function traverseFolderDfs(
   folderId: number | null,
-  currentPath: string = ""
+  currentPath: string = "",
 ): Promise<{
   node: RecursiveFolderNode;
   allFiles: (FileItem & { folderPath: string })[];
@@ -157,8 +157,8 @@ app.get("/api/folders", async (c) => {
         eq(folders.userId, 1),
         parentId === null
           ? isNull(folders.parentId)
-          : eq(folders.parentId, parentId)
-      )
+          : eq(folders.parentId, parentId),
+      ),
     );
 
   return c.json(result);
@@ -227,7 +227,7 @@ app.delete("/api/folders/:id", async (c) => {
 
     for (const file of allFiles) {
       await deleteFileFromS3(file.s3Key).catch((e) =>
-        console.error(`Không thể xóa S3 key ${file.s3Key}:`, e)
+        console.error(`Không thể xóa S3 key ${file.s3Key}:`, e),
       );
     }
 
@@ -264,7 +264,9 @@ app.get("/api/files", async (c) => {
     ? and(eq(files.userId, 1), like(files.name, `%${q}%`))
     : and(
         eq(files.userId, 1),
-        folderId === null ? isNull(files.folderId) : eq(files.folderId, folderId)
+        folderId === null
+          ? isNull(files.folderId)
+          : eq(files.folderId, folderId),
       );
 
   const [{ total }] = await db
@@ -281,15 +283,32 @@ app.get("/api/files", async (c) => {
     .offset(offset);
 
   const data = await Promise.all(
-    fileRecords.map(async (file) => ({
-      ...file,
-      presignedUrl: await generatePresignedDownloadUrl({
+    fileRecords.map(async (file) => {
+      // 1. Ký URL file gốc
+      const presignedUrl = await generatePresignedDownloadUrl({
         s3Key: file.s3Key,
         fileName: file.name,
         mode: "inline",
         expiresInSeconds: 300,
-      }),
-    }))
+      });
+
+      // 2. Ký URL thumbnail (nếu có thumbnailKey do Lambda tạo)
+      let thumbnailPresignedUrl: string | null = null;
+      if (file.thumbnailKey) {
+        thumbnailPresignedUrl = await generatePresignedDownloadUrl({
+          s3Key: file.thumbnailKey,
+          fileName: `thumb-${file.name}.webp`,
+          mode: "inline",
+          expiresInSeconds: 300,
+        });
+      }
+
+      return {
+        ...file,
+        presignedUrl,
+        thumbnailPresignedUrl: thumbnailPresignedUrl || presignedUrl, // Fallback sang ảnh gốc nếu chưa có thumb
+      };
+    }),
   );
 
   return c.json({
@@ -303,7 +322,33 @@ app.get("/api/files", async (c) => {
   });
 });
 
-// 2.2 Xin Pre-signed PUT URL để Direct Upload lên S3
+// 2.2 WEBHOOK NHẬN KẾT QUẢ THUMBNAIL TỪ AWS LAMBDA
+app.post("/api/internal/thumbnail-processed", async (c) => {
+  const { originalKey, thumbnailKey } = await c.req.json();
+  if (!originalKey || !thumbnailKey) {
+    return c.json({ error: "originalKey và thumbnailKey là bắt buộc" }, 400);
+  }
+
+  console.log(
+    `📡 [Webhook] Nhận thumbnail từ Lambda cho: ${originalKey} -> ${thumbnailKey}`,
+  );
+
+  // Cập nhật thumbnail_key vào bản ghi có s3_key tương ứng
+  const updated = await db
+    .update(files)
+    .set({ thumbnailKey })
+    .where(eq(files.s3Key, originalKey))
+    .returning();
+
+  if (updated.length === 0) {
+    console.warn(`⚠️ Không tìm thấy file với s3Key = ${originalKey}`);
+    return c.json({ message: "Không tìm thấy file tương ứng" }, 404);
+  }
+
+  return c.json({ success: true, file: updated[0] });
+});
+
+// 2.3 Xin Pre-signed PUT URL để Direct Upload lên S3
 app.post("/api/files/upload-url", async (c) => {
   const { fileName, mimeType } = await c.req.json();
   if (!fileName || !mimeType) {

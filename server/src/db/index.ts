@@ -18,5 +18,12 @@ export const sqlite = new Database(dbPath);
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
 
+// Tự động kiểm tra và thêm cột thumbnail_key nếu chưa có trong DB
+try {
+  sqlite.exec(`ALTER TABLE files ADD COLUMN thumbnail_key TEXT;`);
+} catch (e) {
+  // Cột đã tồn tại, bỏ qua
+}
+
 // Drizzle ORM instance
 export const db = drizzle(sqlite, { schema });
